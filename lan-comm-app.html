@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>LAN Comm</title>
+<style>
+  /* Self-contained font stack — no external requests needed on LAN */
+  @font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 400 500;
+    src: local('IBM Plex Mono'), local('IBMPlexMono');
+  }
+  @font-face {
+    font-family: 'IBM Plex Sans';
+    font-style: normal;
+    font-weight: 300 400 500;
+    src: local('IBM Plex Sans'), local('IBMPlexSans');
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0e10;
+    --surface: #15171a;
+    --surface2: #1c1f23;
+    --surface3: #23272d;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.13);
+    --text: #e8eaed;
+    --text2: #8b9199;
+    --text3: #555c65;
+    --accent: #00d4a0;
+    --accent-dim: rgba(0,212,160,0.12);
+    --accent-mid: rgba(0,212,160,0.35);
+    --red: #f05050;
+    --red-dim: rgba(240,80,80,0.15);
+    --yellow: #f0c040;
+    --blue: #4d9ef5;
+    --blue-dim: rgba(77,158,245,0.12);
+    --radius: 6px;
+    --radius-lg: 10px;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; overflow: hidden; }
+
+  /* ── Layout ── */
+  #app {
+    display: grid;
+    grid-template-columns: minmax(180px, 220px) 1fr minmax(240px, 300px);
+    grid-template-rows: 48px 1fr;
+    height: 100vh;
+  }
+
+  /* Narrow: collapse peers sidebar to icon rail */
+  @media (max-width: 900px) {
+    #app { grid-template-columns: 48px 1fr minmax(200px, 260px); }
+    #my-id-block, .peer-info, #no-peers { display: none; }
+    .peer-item { justify-content: center; padding: 8px 0; }
+    .peer-call-btn { display: none; }
+    #sidebar .panel-header { font-size: 0; padding: 10px 0; text-align: center; }
+    #sidebar .panel-header::after { content: '👥'; font-size: 20px; }
+  }
+
+  /* Very narrow: full mobile layout */
+  @media (max-width: 600px) {
+    #app {
+      grid-template-columns: 1fr;
+      grid-template-rows: 44px 1fr auto;
+      height: 100dvh;
+    }
+    #topbar {
+      grid-column: 1; padding: 0 10px; gap: 8px;
+    }
+    .logo { display: none; }
+    #sidebar { display: none; }
+    #main { grid-column: 1; grid-row: 2; min-height: 0; }
+    #chat-panel {
+      grid-column: 1; grid-row: 3;
+      border-left: none;
+    }
+    #call-controls { height: 52px; }
+    .ctrl-btn { width: 36px; height: 36px; font-size: 14px; }
+    #call-peer-label { font-size: 10px; }
+  }
+
+  /* Landscape mobile: chat goes to side, give video full height */
+  @media (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+    #app {
+      grid-template-columns: 1fr 220px;
+      grid-template-rows: 44px 1fr;
+    }
+    #topbar { grid-column: 1 / -1; }
+    #sidebar { display: none; }
+    #main { grid-column: 1; grid-row: 2; }
+    #chat-panel { grid-column: 2; grid-row: 2; border-left: 1px solid var(--border); border-top: none; max-height: unset; }
+  }
+
+  /* ── Topbar ── */
+  #topbar {
+    grid-column: 1 / -1;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 16px; gap: 12px;
+  }
+  .logo { font-family: var(--mono); font-size: 20px; font-weight: 500; color: var(--accent); letter-spacing: 0.04em; }
+  .logo span { color: var(--text3); }
+  .topbar-sep { flex: 1; }
+  #status-pill {
+    font-family: var(--mono); font-size: 17px; padding: 3px 10px;
+    border-radius: 100px; border: 1px solid var(--border2);
+    color: var(--text2); display: flex; align-items: center; gap: 6px;
+    transition: all 0.3s;
+  }
+  #status-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text3); transition: background 0.3s; }
+  #status-pill.connected .dot { background: var(--accent); }
+  #status-pill.connected { color: var(--accent); border-color: var(--accent-mid); }
+  #connect-btn, #disconnect-btn {
+    font-family: var(--mono); font-size: 17px; padding: 4px 12px;
+    border-radius: var(--radius); cursor: pointer; border: 1px solid;
+    transition: all 0.15s;
+  }
+  #connect-btn { background: var(--accent-dim); border-color: var(--accent-mid); color: var(--accent); }
+  #connect-btn:hover { background: var(--accent); color: var(--bg); }
+  #disconnect-btn { background: var(--red-dim); border-color: var(--red); color: var(--red); display: none; }
+  #disconnect-btn:hover { background: var(--red); color: #fff; }
+  #preview-btn {
+    font-family: var(--mono); font-size: 17px; padding: 4px 10px;
+    border-radius: var(--radius); cursor: pointer; border: 1px solid var(--border2);
+    background: var(--surface2); color: var(--text2); transition: all 0.15s;
+  }
+  #preview-btn:hover { background: var(--surface3); color: var(--text); }
+  #preview-btn.active { background: var(--accent-dim); border-color: var(--accent-mid); color: var(--accent); }
+
+  /* ── Sidebar: Peers ── */
+  #sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .panel-header {
+    padding: 10px 14px;
+    font-family: var(--mono); font-size: 15px; font-weight: 500;
+    color: var(--text3); letter-spacing: 0.1em; text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+  }
+  #my-id-block {
+    padding: 12px 14px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  #my-avatar {
+    width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+    background: var(--accent-dim); border: 1px solid var(--accent-mid);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 20px; font-weight: 500; color: var(--accent);
+  }
+  #my-id-info { min-width: 0; }
+  #my-id {
+    font-size: 23px; font-weight: 500; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .id-label { font-size: 17px; color: var(--text3); margin-top: 1px; }
+  #peers-list { flex: 1; overflow-y: auto; padding: 8px; }
+  .peer-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: var(--radius);
+    cursor: pointer; transition: background 0.15s; margin-bottom: 2px;
+  }
+  .peer-item:hover { background: var(--surface3); }
+  .peer-item.active { background: var(--accent-dim); }
+  .peer-avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--surface3); border: 1px solid var(--border2);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 20px; color: var(--accent); flex-shrink: 0;
+  }
+  .peer-item.has-unread .peer-avatar { background: var(--accent-dim); border-color: var(--accent-mid); }
+  .peer-info { flex: 1; min-width: 0; }
+  .peer-name { font-size: 23px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .peer-status { font-size: 18px; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .peer-call-btn {
+    width: 30px; height: 30px; border-radius: 50%; background: var(--accent-dim);
+    border: 1px solid var(--accent-mid); color: var(--accent);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    cursor: pointer; transition: all 0.15s; font-size: 21px;
+  }
+  .peer-call-btn:hover { background: var(--accent); color: var(--bg); }
+  #no-peers { padding: 24px 14px; text-align: center; color: var(--text3); font-size: 20px; line-height: 1.6; }
+
+  /* ── Main: Video ── */
+  #main {
+    background: var(--bg);
+    display: flex; flex-direction: column; overflow: hidden; position: relative;
+    min-width: 0; min-height: 0;
+  }
+  #video-area {
+    flex: 1; position: relative; background: #09090b;
+    overflow: hidden; min-height: 0;
+  }
+  #remote-video {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    /* contain shows the full frame (portrait or landscape) without cropping.
+       Use 'cover' if you prefer full bleed at the cost of cropping portrait streams. */
+    object-fit: contain;
+    display: block; background: #09090b;
+  }
+  #local-video {
+    position: absolute;
+    bottom: clamp(8px, 2%, 20px);
+    right: clamp(8px, 2%, 20px);
+    /* No fixed aspect-ratio — let the video's natural dimensions set the shape */
+    width: clamp(80px, 18%, 160px);
+    height: auto; max-height: 40%;
+    object-fit: contain;
+    border-radius: var(--radius-lg); border: 2px solid var(--border2);
+    background: var(--surface2); z-index: 10;
+    transition: transform 0.2s;
+  }
+  #local-video:hover { transform: scale(1.04); }
+  #rtc-state-badge {
+    position: absolute; top: 12px; right: 12px; z-index: 11;
+    font-family: var(--mono); font-size: 15px; padding: 3px 10px;
+    border-radius: 100px; border: 1px solid var(--border2);
+    background: rgba(0,0,0,0.6); color: var(--text3);
+    display: none; align-items: center; gap: 5px; letter-spacing: 0.04em;
+  }
+  #rtc-state-badge.visible { display: flex; }
+  #video-area.call-active #remote-controls { display: flex; }
+  #rtc-state-badge .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--text3); }
+  #rtc-state-badge.state-connecting .dot { background: var(--yellow); }
+  #rtc-state-badge.state-connecting { color: var(--yellow); border-color: rgba(240,192,64,0.35); }
+  #rtc-state-badge.state-connected .dot { background: var(--accent); }
+  #rtc-state-badge.state-connected { color: var(--accent); border-color: var(--accent-mid); }
+  #rtc-state-badge.state-failed .dot { background: var(--red); }
+  #rtc-state-badge.state-failed { color: var(--red); border-color: rgba(240,80,80,0.35); }
+  #idle-screen {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 8px;
+    color: var(--text3);
+  }
+  .idle-icon { font-size: 54px; opacity: 0.3; }
+  #idle-screen p { font-family: var(--mono); font-size: 18px; color: var(--text3); }
+
+  #call-banner {
+    display: none; position: absolute; top: 0; left: 0; right: 0;
+    background: rgba(0,0,0,0.85); backdrop-filter: blur(4px);
+    padding: 12px 20px; z-index: 20;
+    border-bottom: 1px solid var(--border);
+    align-items: center; gap: 12px;
+  }
+  #call-banner.visible { display: flex; }
+  #call-banner-label { font-family: var(--mono); font-size: 18px; color: var(--yellow); flex: 1; }
+  .banner-btn {
+    font-family: var(--mono); font-size: 17px; padding: 5px 14px;
+    border-radius: var(--radius); cursor: pointer; border: 1px solid; transition: all 0.15s;
+  }
+  .banner-accept { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+  .banner-accept:hover { background: var(--accent); color: var(--bg); }
+  .banner-reject { background: var(--red-dim); border-color: var(--red); color: var(--red); }
+  .banner-reject:hover { background: var(--red); color: #fff; }
+
+  /* ── Call Controls ── */
+  #call-controls {
+    height: 60px; background: var(--surface);
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+  }
+  .ctrl-btn {
+    width: 40px; height: 40px; border-radius: 50%;
+    border: 1px solid var(--border2); background: var(--surface2);
+    color: var(--text2); cursor: pointer; display: flex; align-items: center; justify-content: center;
+    font-size: 24px; transition: all 0.15s;
+  }
+  .ctrl-btn:hover { background: var(--surface3); color: var(--text); }
+  .ctrl-btn.active { background: var(--accent-dim); border-color: var(--accent-mid); color: var(--accent); }
+  .ctrl-btn.danger { background: var(--red-dim); border-color: var(--red); color: var(--red); }
+  .ctrl-btn.danger:hover { background: var(--red); color: #fff; }
+  /* Remote stream mute controls — overlay on video area */
+  #remote-controls {
+    position: absolute; top: 12px; left: 12px; z-index: 12;
+    display: none; gap: 6px;
+  }
+  #remote-controls.visible { display: flex; }
+  .remote-ctrl-btn {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: rgba(0,0,0,0.55); border: 1px solid var(--border2);
+    color: var(--text2); cursor: pointer; display: flex; align-items: center;
+    justify-content: center; font-size: 21px; transition: all 0.15s;
+    backdrop-filter: blur(4px);
+  }
+  .remote-ctrl-btn:hover { background: rgba(0,0,0,0.8); color: var(--text); }
+  .remote-ctrl-btn.active { background: var(--red-dim); border-color: var(--red); color: var(--red); }
+
+  #call-peer-label {
+    font-family: var(--mono); font-size: 17px; color: var(--text3);
+    position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+    max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  @media (max-width: 600px) {
+    #call-peer-label { max-width: 55%; font-size: 12px; }
+  }
+  #call-timer {
+    font-family: var(--mono); font-size: 17px; color: var(--accent);
+    position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+    display: none;
+  }
+
+  /* ── Chat Sidebar ── */
+  #chat-panel {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
+    min-width: 0;
+  }
+  /* Mobile chat backdrop — tap to dismiss */
+  #chat-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 5;
+    background: rgba(0,0,0,0.4);
+  }
+  @media (max-width: 600px) {
+    #chat-panel {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      max-height: 65vh; z-index: 6;
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      transform: translateY(100%);
+      transition: transform 0.25s ease;
+      border-top: 1px solid var(--border2);
+    }
+    #chat-panel.open {
+      transform: translateY(0);
+    }
+    #chat-backdrop.open { display: block; }
+  }
+  /* Conversation tab strip */
+  #chat-tabs {
+    display: flex; overflow-x: auto; border-bottom: 1px solid var(--border);
+    scrollbar-width: none; flex-shrink: 0;
+  }
+  #chat-tabs::-webkit-scrollbar { display: none; }
+  #chat-tabs-empty {
+    padding: 10px 14px; font-size: 18px; color: var(--text3);
+    font-family: var(--mono); white-space: nowrap;
+  }
+  .chat-tab {
+    display: flex; align-items: center; gap: 6px;
+    padding: 9px 14px; cursor: pointer; white-space: nowrap;
+    font-size: 21px; color: var(--text2); border-bottom: 2px solid transparent;
+    transition: all 0.15s; flex-shrink: 0; position: relative;
+    max-width: 180px;
+  }
+  .chat-tab .tab-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  @media (max-width: 600px) {
+    .chat-tab { max-width: unset; font-size: 15px; }
+  }
+  .chat-tab:hover { color: var(--text); background: var(--surface2); }
+  .chat-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .chat-tab .unread-badge {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); display: none; flex-shrink: 0;
+  }
+  .chat-tab.has-unread .unread-badge { display: block; }
+  /* Conversation pane */
+  #chat-pane {
+    flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;
+  }
+  #chat-convo-header {
+    padding: 8px 14px; border-bottom: 1px solid var(--border);
+    font-size: 20px; color: var(--text2); flex-shrink: 0; display: none;
+  }
+  #chat-messages {
+    flex: 1; overflow-y: auto; padding: 12px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  #chat-messages::-webkit-scrollbar { width: 4px; }
+  #chat-messages::-webkit-scrollbar-track { background: transparent; }
+  #chat-messages::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  #chat-empty-state {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--text3); font-size: 20px; text-align: center; padding: 20px;
+    line-height: 1.6;
+  }
+  .msg { max-width: 88%; display: flex; flex-direction: column; gap: 3px; }
+  .msg.me { align-self: flex-end; align-items: flex-end; }
+  .msg.them { align-self: flex-start; align-items: flex-start; }
+  .msg-meta { font-size: 17px; color: var(--text3); padding: 0 6px; }
+  .msg-bubble {
+    padding: 9px 13px; border-radius: var(--radius-lg); font-size: 21px; line-height: 1.5;
+    word-break: break-word; max-width: 100%;
+  }
+  .msg.me .msg-bubble { background: var(--accent-dim); color: var(--text); border: 1px solid var(--accent-mid); border-bottom-right-radius: 3px; }
+  .msg.them .msg-bubble { background: var(--surface3); color: var(--text); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+  .msg-system {
+    align-self: center; font-size: 17px;
+    color: var(--text3); padding: 4px 12px; background: var(--surface2);
+    border-radius: 100px; border: 1px solid var(--border);
+  }
+  #chat-input-row {
+    padding: 10px; border-top: 1px solid var(--border);
+    display: flex; gap: 8px;
+  }
+  #chat-input {
+    flex: 1; background: var(--surface2); border: 1px solid var(--border2);
+    border-radius: var(--radius); color: var(--text); font-family: var(--sans);
+    font-size: 21px; padding: 9px 13px; outline: none; resize: none;
+    height: 38px; transition: border-color 0.15s;
+  }
+  #chat-input:focus { border-color: var(--accent); }
+  #send-btn {
+    width: 38px; height: 38px; border-radius: var(--radius);
+    background: var(--accent-dim); border: 1px solid var(--accent-mid);
+    color: var(--accent); cursor: pointer; display: flex; align-items: center; justify-content: center;
+    font-size: 24px; transition: all 0.15s; flex-shrink: 0;
+  }
+  #send-btn:hover { background: var(--accent); color: var(--bg); }
+
+  /* ── Scrollbar global ── */
+  * { scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
+
+  /* ── Mobile chat FAB ── */
+  #chat-fab {
+    display: none;
+    position: fixed; bottom: 72px; right: 16px; z-index: 7;
+    width: 48px; height: 48px; border-radius: 50%;
+    background: var(--accent); border: none; color: var(--bg);
+    font-size: 30px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+    align-items: center; justify-content: center;
+  }
+  #chat-fab-badge {
+    position: absolute; top: -2px; right: -2px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--red); border: 2px solid var(--bg);
+  }
+  @media (max-width: 600px) {
+    #chat-fab { display: flex; }
+  }
+
+  /* ── System log (persistent — lives above chat tabs, never cleared) ── */
+  #system-log {
+    max-height: 72px; overflow-y: auto; flex-shrink: 0;
+    padding: 4px 8px; display: flex; flex-direction: column; gap: 2px;
+    border-bottom: 1px solid var(--border);
+    scrollbar-width: none;
+  }
+  #system-log:empty { display: none; }
+  #system-log::-webkit-scrollbar { display: none; }
+
+  /* ── Utility ── */
+  .hidden { display: none !important; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .pulsing { animation: pulse 1.5s infinite; }
+
+  /* ── Auth screen ── */
+  #auth-screen {
+    position: fixed; inset: 0; z-index: 100;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #auth-box {
+    width: 340px; background: var(--surface);
+    border: 1px solid var(--border2); border-radius: var(--radius-lg);
+    padding: 32px 28px; display: flex; flex-direction: column; gap: 20px;
+  }
+  #auth-box .auth-logo {
+    font-family: var(--mono); font-size: 27px; font-weight: 500;
+    color: var(--accent); letter-spacing: 0.04em; text-align: center;
+  }
+  #auth-box .auth-logo span { color: var(--text3); }
+  #auth-tabs {
+    display: flex; border-bottom: 1px solid var(--border);
+  }
+  .auth-tab {
+    flex: 1; padding: 8px; text-align: center; cursor: pointer;
+    font-family: var(--mono); font-size: 18px; color: var(--text3);
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: all 0.15s;
+  }
+  .auth-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .auth-form { display: flex; flex-direction: column; gap: 12px; }
+  .auth-form input {
+    background: var(--surface2); border: 1px solid var(--border2);
+    border-radius: var(--radius); color: var(--text); font-family: var(--sans);
+    font-size: 20px; padding: 9px 12px; outline: none; width: 100%;
+    transition: border-color 0.15s;
+  }
+  .auth-form input:focus { border-color: var(--accent); }
+  .auth-form input::placeholder { color: var(--text3); }
+  .auth-submit {
+    background: var(--accent); color: var(--bg); border: none;
+    border-radius: var(--radius); font-family: var(--mono); font-size: 18px;
+    font-weight: 500; padding: 10px; cursor: pointer; transition: opacity 0.15s;
+    letter-spacing: 0.04em;
+  }
+  .auth-submit:hover { opacity: 0.85; }
+  .auth-submit:disabled { opacity: 0.4; cursor: default; }
+  #auth-error {
+    font-family: var(--mono); font-size: 17px; color: var(--red);
+    text-align: center; min-height: 16px;
+  }
+
+  /* ── User pill in topbar ── */
+  #user-pill {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 17px; color: var(--text2);
+  }
+  #user-pill .user-name { color: var(--accent); }
+  #logout-btn {
+    font-family: var(--mono); font-size: 17px; padding: 3px 10px;
+    border-radius: var(--radius); cursor: pointer; border: 1px solid var(--border2);
+    background: transparent; color: var(--text3); transition: all 0.15s;
+  }
+  #logout-btn:hover { border-color: var(--red); color: var(--red); }
+</style>
+<script>/* __SERVER_IP__ */</script>
+</head>
+<body>
+
+<!-- Auth screen — shown until user logs in -->
+<div id="auth-screen">
+  <div id="auth-box">
+    <div class="auth-logo">lan<span>/</span>comm</div>
+    <div id="auth-tabs">
+      <div class="auth-tab active" data-tab="login">login</div>
+      <div class="auth-tab" data-tab="register">register</div>
+    </div>
+    <div class="auth-form" id="login-form">
+      <input id="login-email" type="email" placeholder="email" autocomplete="email" />
+      <input id="login-password" type="password" placeholder="password" autocomplete="current-password" />
+      <button class="auth-submit" id="login-btn">login</button>
+    </div>
+    <div class="auth-form hidden" id="register-form">
+      <input id="reg-email" type="email" placeholder="email" autocomplete="email" />
+      <input id="reg-display" type="text" placeholder="display name" />
+      <input id="reg-password" type="password" placeholder="password" autocomplete="new-password" />
+      <input id="reg-password2" type="password" placeholder="confirm password" autocomplete="new-password" />
+      <button class="auth-submit" id="register-btn">create account</button>
+    </div>
+    <div id="auth-error"></div>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <div id="chat-backdrop"></div>
+
+  <!-- Topbar -->
+  <header id="topbar">
+    <div class="logo">lan<span>/</span>comm</div>
+    <button id="preview-btn" title="Preview camera">📷</button>
+    <div class="topbar-sep"></div>
+    <div id="user-pill">
+      <span id="user-display-name" class="user-name">—</span>
+      <button id="logout-btn">logout</button>
+    </div>
+    <div id="status-pill"><span class="dot"></span><span id="status-text">offline</span></div>
+  </header>
+
+  <!-- Peers Sidebar -->
+  <aside id="sidebar">
+    <div class="panel-header">peers on lan</div>
+    <div id="my-id-block">
+      <div id="my-avatar">—</div>
+      <div id="my-id-info">
+        <div id="my-id">—</div>
+        <div class="id-label">you</div>
+      </div>
+    </div>
+    <div id="peers-list">
+      <div id="no-peers">No peers connected.<br/>Start the signaling server<br/>and share your ID.</div>
+    </div>
+  </aside>
+
+  <!-- Main Video Area -->
+  <main id="main">
+    <div id="video-area">
+      <div id="idle-screen">
+        <div class="idle-icon">📡</div>
+        <p>select a peer to start a call</p>
+      </div>
+      <video id="remote-video" autoplay playsinline muted class="hidden"></video>
+      <video id="local-video" autoplay playsinline muted class="hidden"></video>
+      <div id="rtc-state-badge"><span class="dot"></span><span id="rtc-state-text">—</span></div>
+      <div id="remote-controls">
+        <button class="remote-ctrl-btn" id="btn-remote-mic" title="Mute incoming audio" onclick="toggleRemoteAudio()">🔊</button>
+        <button class="remote-ctrl-btn" id="btn-remote-cam" title="Hide incoming video" onclick="toggleRemoteVideo()">👁</button>
+      </div>
+      <div id="call-banner">
+        <span id="call-banner-label" class="pulsing">incoming call from —</span>
+        <button class="banner-btn banner-accept" id="accept-btn">accept</button>
+        <button class="banner-btn banner-reject" id="reject-btn">decline</button>
+      </div>
+    </div>
+    <div id="call-controls" style="position:relative;">
+      <span id="call-peer-label">—</span>
+      <button class="ctrl-btn" id="btn-mic" title="Mute mic">🎤</button>
+      <button class="ctrl-btn" id="btn-cam" title="Disable camera">📷</button>
+      <button class="ctrl-btn hidden" id="btn-flip" title="Flip camera">🔄</button>
+      <button class="ctrl-btn danger hidden" id="btn-hangup" title="Hang up">📵</button>
+      <button class="ctrl-btn" id="btn-start-call" title="Start call">📞</button>
+      <span id="call-timer">00:00</span>
+    </div>
+  </main>
+
+  <!-- Mobile: floating chat open button -->
+  <button id="chat-fab" title="Open messages" onclick="openChatPanel()">💬<span id="chat-fab-badge" class="hidden"></span></button>
+
+  <!-- Chat Panel -->
+  <aside id="chat-panel">
+    <div class="panel-header">messages</div>
+    <div id="system-log"></div>
+    <div id="chat-tabs">
+      <span id="chat-tabs-empty">no conversations yet</span>
+    </div>
+    <div id="chat-pane">
+      <div id="chat-empty-state">select a peer to start a conversation</div>
+      <div id="chat-messages" class="hidden"></div>
+      <div id="chat-input-row" class="hidden">
+        <textarea id="chat-input" placeholder="message..." rows="1"></textarea>
+        <button id="send-btn">➤</button>
+      </div>
+    </div>
+  </aside>
+
+</div>
+<!-- end #app -->
+
+<!-- Debug overlay — triple-tap video area to toggle -->
+<div id="debug-overlay" style="
+  display:none; position:fixed; bottom:0; left:0; right:0; max-height:40vh;
+  overflow-y:auto; background:rgba(0,0,0,.85); color:#0f0; font:11px/1.4 monospace;
+  padding:8px 10px; z-index:9999; pointer-events:auto;
+">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+    <b style="color:#0f0;">WebRTC Debug</b>
+    <button onclick="document.getElementById('debug-overlay').style.display='none'"
+      style="background:none;border:none;color:#f55;font:bold 14px monospace;cursor:pointer;">X</button>
+  </div>
+  <pre id="debug-log" style="margin:0; white-space:pre-wrap; word-break:break-all;"></pre>
+</div>
+
+<script src="/app.js"></script>
+
+</body>
+</html>
